@@ -60,6 +60,13 @@ table.bar td,table.bar th{border-bottom:1px solid var(--line);padding:5px 4px;te
 .sug button:last-child{border-bottom:none}
 .sug small{display:block;opacity:.75;font-size:12px}
 .zt{display:inline-block;padding:0 7px;border-radius:999px;color:#fff;font-size:11.5px;margin-left:6px}
+.md{border:1px solid var(--line);border-radius:8px;padding:6px 9px;margin:6px 0}
+.md.sel{border-color:#1d6ff2;background:rgba(29,111,242,.08)}
+.md.off{opacity:.55}
+.md label{cursor:pointer;display:block}
+.lt{display:inline-block;width:20px;height:20px;line-height:20px;text-align:center;border-radius:50%;color:#fff;font-size:12px;margin-right:4px}
+.mini{padding:7px 10px}
+#stops .fld{margin:8px 0}
 </style>
 </head>
 <body>
@@ -81,17 +88,13 @@ table.bar td,table.bar th{border-bottom:1px solid var(--line);padding:5px 4px;te
   <div class="row" style="justify-content:space-between"><h2>Frais kilométriques</h2><button id="dclose" type="button" aria-label="Fermer">Fermer</button></div>
   <div class="tabs"><button type="button" id="t1" class="on">Trajet</button><button type="button" id="t2">Barème 2026</button></div>
   <div id="pane1">
-    <div class="fld"><label for="fs">Départ (zone primaire)</label>
-      <div class="row"><input id="fs" type="text" inputmode="text" autocomplete="off" placeholder="Code postal, ville ou adresse" style="flex:1;min-width:110px">
-      <button type="button" id="gps">Ma position</button><button type="button" id="pks">Pointer</button></div><div class="sug" id="sgs"></div></div>
-    <div class="fld"><label for="fe">Arrivée (zone secondaire)</label>
-      <div class="row"><input id="fe" type="text" inputmode="text" autocomplete="off" placeholder="Code postal, ville ou adresse" style="flex:1;min-width:110px">
-      <button type="button" id="pke">Pointer</button></div><div class="sug" id="sge"></div>
-      <div class="sm" style="margin-top:4px">Tape un code postal, une ville ou une adresse complète, puis choisis une suggestion. « Pointer » permet de placer le point à la main sur la carte.</div></div>
+    <div id="stops"></div>
+    <button type="button" id="addstop" style="width:100%">+ Ajouter une étape</button>
+    <div class="sm" style="margin:5px 0 8px">Départ en zone primaire, puis tes étapes dans l'ordre de la journée. Les flèches changent l'ordre.</div>
     <div class="fld"><label for="rate">Prix du km (7 CV et plus, thermique)</label>
       <select id="tier"><option value="0.697">Jusqu'à 5 000 km/an : 0,697 €/km</option><option value="0.394">5 001 à 20 000 km/an : 0,394 €/km (+ forfait annuel de 1 515 €)</option><option value="0.470">Au-delà de 20 000 km/an : 0,470 €/km</option></select>
       <input id="rate" type="number" step="0.001" min="0" value="0.697" style="margin-top:6px" aria-label="Prix du kilomètre en euros"></div>
-    <div class="fld"><label class="chip" style="border:none;padding:2px 0"><input type="checkbox" id="rt">Aller-retour (distance doublée)</label>
+    <div class="fld"><label class="chip" style="border:none;padding:2px 0"><input type="checkbox" id="rt">Retour au point de départ en fin de journée</label>
       <label class="chip" style="border:none;padding:2px 0"><input type="checkbox" id="oz">Compter aussi les km hors des zones listées</label></div>
     <button type="button" class="go" id="calc">Calculer</button>
     <div id="res" role="status"></div>
@@ -193,18 +196,9 @@ function openD(o){dr.classList.toggle('open',o);$('dtoggle').setAttribute('aria-
 $('dtoggle').onclick=()=>openD(true);$('dclose').onclick=()=>openD(false);
 $('t1').onclick=()=>{$('pane1').style.display='';$('pane2').style.display='none';$('t1').classList.add('on');$('t2').classList.remove('on')};
 $('t2').onclick=()=>{$('pane2').style.display='';$('pane1').style.display='none';$('t2').classList.add('on');$('t1').classList.remove('on')};
-$('tier').onchange=e=>{$('rate').value=e.target.value};
-const pts={s:null,e:null},pins={s:null,e:null};
-function setPt(k,lat,lng,label){
-  pts[k]={lat,lng,label};
-  if(pins[k])pins[k].remove();
-  pins[k]=L.marker([lat,lng],{icon:L.divIcon({className:'',html:`<div class="pin" style="background:${k==='s'?'#1b6b32':'#b45f00'}">${k==='s'?'A':'B'}</div>`,iconSize:[26,26],iconAnchor:[13,13]})}).addTo(map);
-}
-function cpPoint(v){
-  if(byCp[v]){const q=byCp[v].f.properties.pt;return {lat:q[1],lng:q[0],label:v}}
-  if(ALIAS[v]){const c=L.geoJSON({type:'Feature',geometry:ALIAS[v].geometry}).getBounds().getCenter();return {lat:c.lat,lng:c.lng,label:v}}
-  return null}
 function esc(s){return String(s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]))}
+const fmt=(x,d=1)=>x.toLocaleString('fr-FR',{minimumFractionDigits:d,maximumFractionDigits:d});
+function fmtDur(s){if(s==null)return '—';const m=Math.round(s/60);return m<60?m+' min':Math.floor(m/60)+' h '+String(m%60).padStart(2,'0')}
 async function geo(q,limit=5){
   const ctl=new AbortController(),to=setTimeout(()=>ctl.abort(),8000);
   try{const r=await fetch(`https://api-adresse.data.gouv.fr/search/?q=${encodeURIComponent(q)}&limit=${limit}&lat=50.72&lon=2.15`,{signal:ctl.signal});
@@ -213,44 +207,12 @@ async function geo(q,limit=5){
   catch(e){return null}finally{clearTimeout(to)}
 }
 const ZT={P:['Primaire','#2e9e4f'],S:['Secondaire','#d9730d'],O:['Hors zones','#6b7780']};
-['s','e'].forEach(k=>{
-  const inp=$(k==='s'?'fs':'fe'),box=$(k==='s'?'sgs':'sge');let tok=0,tm=null;
-  const hide=()=>{box.style.display='none';box.innerHTML=''};
-  inp.addEventListener('input',()=>{
-    const v=inp.value.trim();pts[k]=null;if(pins[k]){pins[k].remove();pins[k]=null}
-    clearTimeout(tm);
-    if(v.length<3){hide();return}
-    if(/^\d{5}$/.test(v)){const q=cpPoint(v);if(q)setPt(k,q.lat,q.lng,v)}
-    const my=++tok;
-    tm=setTimeout(async()=>{
-      const r=await geo(v);
-      if(my!==tok)return;
-      if(r===null){box.innerHTML='<div class="sm" style="padding:8px 10px">Recherche d\'adresses indisponible (connexion ?). Utilise un code postal de la liste ou « Pointer ».</div>';box.style.display='block';return}
-      if(!r.length){box.innerHTML='<div class="sm" style="padding:8px 10px">Aucun résultat.</div>';box.style.display='block';return}
-      box.innerHTML='';
-      r.forEach(x=>{
-        const z=ZT[cls(x.lng,x.lat)],b=document.createElement('button');b.type='button';
-        b.innerHTML=`${esc(x.label)}<span class="zt" style="background:${z[1]}">${z[0]}</span><small>${esc(x.ctx)}</small>`;
-        b.onclick=()=>{setPt(k,x.lat,x.lng,x.label);inp.value=x.label;hide();map.panTo([x.lat,x.lng])};
-        box.appendChild(b)});
-      box.style.display='block';
-    },300);
-  });
-  inp.addEventListener('keydown',e=>{if(e.key==='Enter'){const f=box.querySelector('button');if(f){e.preventDefault();f.click()}}});
-  document.addEventListener('click',e=>{if(!box.contains(e.target)&&e.target!==inp)hide()});
-});
-let pick=null;
-function setPick(k){pick=pick===k?null:k;$('pks').classList.toggle('act',pick==='s');$('pke').classList.toggle('act',pick==='e');map.getContainer().style.cursor=pick?'crosshair':'';
-  if(pick&&window.innerWidth<700)openD(false)}
-$('pks').onclick=()=>setPick('s');$('pke').onclick=()=>setPick('e');
-map.on('click',e=>{if(!pick)return;const k=pick;setPt(k,e.latlng.lat,e.latlng.lng,'point choisi');$(k==='s'?'fs':'fe').value='point choisi';setPick(k);openD(true)});
-$('gps').onclick=()=>{
-  if(!navigator.geolocation){alert('Localisation indisponible.');return}
-  navigator.geolocation.getCurrentPosition(p=>{setPt('s',p.coords.latitude,p.coords.longitude,'ma position');$('fs').value='ma position'},()=>alert('Position refusée ou indisponible.'),{enableHighAccuracy:true,timeout:15000});
-};
-let routeLayer=null;
+function cpPoint(v){
+  if(byCp[v]){const q=byCp[v].f.properties.pt;return {lat:q[1],lng:q[0],label:v}}
+  if(ALIAS[v]){const c=L.geoJSON({type:'Feature',geometry:ALIAS[v].geometry}).getBounds().getCenter();return {lat:c.lat,lng:c.lng,label:v}}
+  return null}
 function analyse(coords){
-  const dist={P:0,S:0,O:0},runs=[];let cum=0,entry=null,prev=null;
+  const dist={P:0,S:0,O:0},runs=[];let cum=0,entry=null;
   for(let i=0;i<coords.length-1;i++){
     const a=coords[i],b=coords[i+1],len=hav(a,b),n=Math.max(1,Math.ceil(len/0.08));
     for(let k=0;k<n;k++){
@@ -265,63 +227,191 @@ function analyse(coords){
   }
   return {dist,runs,entry,total:cum};
 }
-const fmt=(x,d=1)=>x.toLocaleString('fr-FR',{minimumFractionDigits:d,maximumFractionDigits:d});
-async function getRoute(a,b){
+
+/* ---- étapes du trajet ---- */
+const LET=i=>String.fromCharCode(65+i);
+const MAXSTOPS=10;
+let stops=[{pt:null,text:''},{pt:null,text:''}];
+let pins=[],pick=null,routeLayer=null,last=null;
+const pinColor=(i,n)=>i===0?'#1b6b32':(i===n-1?'#b45f00':'#1d6ff2');
+function drawPins(){
+  pins.forEach(p=>p&&p.remove());
+  pins=stops.map((s,i)=>s.pt?L.marker([s.pt.lat,s.pt.lng],{icon:L.divIcon({className:'',html:`<div class="pin" style="background:${pinColor(i,stops.length)}">${LET(i)}</div>`,iconSize:[26,26],iconAnchor:[13,13]})}).addTo(map):null);
+}
+function setPoint(s,pt){s.pt=pt;s.text=pt.label;drawPins()}
+function setPick(s){
+  pick=(pick===s)?null:s;
+  stops.forEach(x=>{if(x.pkBtn)x.pkBtn.classList.toggle('act',pick===x)});
+  map.getContainer().style.cursor=pick?'crosshair':'';
+  if(pick&&window.innerWidth<700)openD(false);
+}
+map.on('click',e=>{if(!pick)return;const s=pick;setPoint(s,{lat:e.latlng.lat,lng:e.latlng.lng,label:'point choisi'});if(s.el)s.el.value='point choisi';setPick(s);openD(true)});
+document.addEventListener('click',e=>{if(!(e.target.closest&&e.target.closest('.fld')))document.querySelectorAll('.sug').forEach(b=>{b.style.display='none'})});
+
+function attachSuggest(s,inp,box){
+  let tok=0,tm=null;
+  const hide=()=>{box.style.display='none';box.innerHTML=''};
+  inp.addEventListener('input',()=>{
+    const v=inp.value.trim();s.text=inp.value;s.pt=null;drawPins();clearTimeout(tm);
+    if(v.length<3){hide();return}
+    if(/^\d{5}$/.test(v)){const q=cpPoint(v);if(q){s.pt=q;drawPins()}}
+    const my=++tok;
+    tm=setTimeout(async()=>{
+      const r=await geo(v);
+      if(my!==tok)return;
+      if(r===null){box.innerHTML='<div class="sm" style="padding:8px 10px">Recherche d\'adresses indisponible (connexion ?). Utilise un code postal de la liste ou « Pointer ».</div>';box.style.display='block';return}
+      if(!r.length){box.innerHTML='<div class="sm" style="padding:8px 10px">Aucun résultat.</div>';box.style.display='block';return}
+      box.innerHTML='';
+      r.forEach(x=>{
+        const z=ZT[cls(x.lng,x.lat)],b=document.createElement('button');b.type='button';
+        b.innerHTML=`${esc(x.label)}<span class="zt" style="background:${z[1]}">${z[0]}</span><small>${esc(x.ctx)}</small>`;
+        b.onclick=()=>{setPoint(s,{lat:x.lat,lng:x.lng,label:x.label});inp.value=x.label;hide();map.panTo([x.lat,x.lng])};
+        box.appendChild(b)});
+      box.style.display='block';
+    },300);
+  });
+  inp.addEventListener('keydown',e=>{if(e.key==='Enter'){const f=box.querySelector('button');if(f){e.preventDefault();f.click()}}});
+}
+function mkBtn(txt,title,fn,cls2){const b=document.createElement('button');b.type='button';b.textContent=txt;b.title=title;b.setAttribute('aria-label',title);b.className=cls2||'';b.onclick=fn;return b}
+function render(){
+  const box=$('stops');box.innerHTML='';
+  const n=stops.length;
+  stops.forEach((s,i)=>{
+    const f=document.createElement('div');f.className='fld';
+    const lab=document.createElement('label');
+    lab.innerHTML=`<span class="lt" style="background:${pinColor(i,n)}">${LET(i)}</span>`+(i===0?'Départ (zone primaire)':(i===n-1?'Arrivée':'Étape '+i));
+    f.appendChild(lab);
+    const row=document.createElement('div');row.className='row';
+    const inp=document.createElement('input');inp.type='text';inp.setAttribute('autocomplete','off');inp.placeholder='Code postal, ville ou adresse';inp.value=s.text||'';inp.style.cssText='flex:1;min-width:110px';inp.setAttribute('aria-label',lab.textContent);
+    row.appendChild(inp);s.el=inp;
+    if(i===0)row.appendChild(mkBtn('Ma position','Utiliser ma position',()=>{
+      if(!navigator.geolocation){alert('Localisation indisponible.');return}
+      navigator.geolocation.getCurrentPosition(p=>{setPoint(s,{lat:p.coords.latitude,lng:p.coords.longitude,label:'ma position'});inp.value='ma position'},()=>alert('Position refusée ou indisponible.'),{enableHighAccuracy:true,timeout:15000});
+    }));
+    const pk=mkBtn('Pointer','Pointer sur la carte',()=>setPick(s),pick===s?'act':'');s.pkBtn=pk;row.appendChild(pk);
+    if(i>0&&i<n-1){
+      if(i>1)row.appendChild(mkBtn('↑','Monter cette étape',()=>{const k=stops.indexOf(s);[stops[k-1],stops[k]]=[stops[k],stops[k-1]];render();drawPins()},'mini'));
+      if(i<n-2)row.appendChild(mkBtn('↓','Descendre cette étape',()=>{const k=stops.indexOf(s);[stops[k+1],stops[k]]=[stops[k],stops[k+1]];render();drawPins()},'mini'));
+      row.appendChild(mkBtn('✕','Supprimer cette étape',()=>{stops.splice(stops.indexOf(s),1);if(pick===s)setPick(s);render();drawPins()},'mini'));
+    }
+    f.appendChild(row);
+    const sg=document.createElement('div');sg.className='sug';f.appendChild(sg);
+    attachSuggest(s,inp,sg);
+    box.appendChild(f);
+  });
+  $('addstop').style.display=stops.length>=MAXSTOPS?'none':'';
+}
+$('addstop').onclick=()=>{if(stops.length>=MAXSTOPS)return;const s={pt:null,text:''};stops.splice(stops.length-1,0,s);render();s.el.focus()};
+render();
+
+/* ---- itinéraires ---- */
+const MODES=[['fast','Le plus rapide'],['short','Le plus court'],['nomot','Sans autoroute']];
+async function osrm(a,b,extra){
   const ctl=new AbortController(),to=setTimeout(()=>ctl.abort(),15000);
   try{
-    const r=await fetch(`https://router.project-osrm.org/route/v1/driving/${a.lng},${a.lat};${b.lng},${b.lat}?overview=full&geometries=geojson`,{signal:ctl.signal});
+    const r=await fetch(`https://router.project-osrm.org/route/v1/driving/${a.lng},${a.lat};${b.lng},${b.lat}?overview=full&geometries=geojson${extra}`,{signal:ctl.signal});
     const j=await r.json();
-    if(j.code!=='Ok')throw new Error(j.code);
-    return {coords:j.routes[0].geometry.coordinates,approx:false};
-  }catch(err){
-    const line=[[a.lng,a.lat],[b.lng,b.lat]];return {coords:line,approx:true};
-  }finally{clearTimeout(to)}
+    if(j.code!=='Ok'||!j.routes||!j.routes.length)return null;
+    return j.routes.map(x=>({coords:x.geometry.coordinates,dist:x.distance,dur:x.duration,approx:false}));
+  }catch(e){return null}finally{clearTimeout(to)}
 }
-$('calc').onclick=async()=>{
-  const res=$('res');res.style.display='block';
-  for(const k of ['s','e']){
-    const inp=$(k==='s'?'fs':'fe'),v=inp.value.trim();
-    if(!pts[k]&&v){
-      const q=/^\d{5}$/.test(v)?cpPoint(v):null;
-      if(q)setPt(k,q.lat,q.lng,v);
-      else{res.innerHTML='Recherche de l\'adresse…';const r=await geo(v,1);
-        if(r&&r.length){setPt(k,r[0].lat,r[0].lng,r[0].label);inp.value=r[0].label}
-        else{res.innerHTML=r===null?'Recherche d\'adresses indisponible : utilise un code postal de la liste ou « Pointer ».':`Adresse introuvable : « ${esc(v)} ». Précise la ville ou choisis une suggestion.`;return}}
-    }
-  }
-  if(!pts.s||!pts.e){res.innerHTML='Renseigne le départ et l\'arrivée (code postal de la liste, ou « Pointer » sur la carte).';return}
-  res.innerHTML='Calcul de l\'itinéraire…';
-  const {coords,approx}=await getRoute(pts.s,pts.e);
-  let a=analyse(coords);
-  let factor=1;
-  if(approx){factor=1.3;}
-  const D={P:a.dist.P*factor,S:a.dist.S*factor,O:a.dist.O*factor};
+async function legRoutes(a,b){
+  const [r1,r3]=await Promise.all([osrm(a,b,'&alternatives=true'),osrm(a,b,'&exclude=motorway')]);
+  if(!r1){const o={coords:[[a.lng,a.lat],[b.lng,b.lat]],dist:0,dur:null,approx:true};return {fast:o,short:o,nomot:o}}
+  const short=r1.reduce((m,x)=>x.dist<m.dist?x:m,r1[0]);
+  return {fast:r1[0],short,nomot:r3?r3[0]:null};
+}
+function totals(R){const T={P:0,S:0,O:0,dur:0,durOk:true};R.legs.forEach(l=>{T.P+=l.dist.P;T.S+=l.dist.S;T.O+=l.dist.O;if(l.dur==null)T.durOk=false;else T.dur+=l.dur});return T}
+function draw(m){
   if(routeLayer)routeLayer.remove();
   routeLayer=L.layerGroup().addTo(map);
-  const COLR={P:'#1b6b32',S:'#d9730d',O:'#6b7780'};
-  L.polyline(a.runs.flatMap(r=>r.p),{color:'#fff',weight:10,opacity:.9}).addTo(routeLayer);
-  a.runs.forEach(r=>L.polyline(r.p,{color:COLR[r.c],weight:6,opacity:1,dashArray:approx?'2 8':null}).addTo(routeLayer));
-  if(a.entry)L.circleMarker([a.entry.pt[1],a.entry.pt[0]],{radius:7,color:'#fff',weight:3,fillColor:'#d9730d',fillOpacity:1}).bindTooltip('Entrée en zone secondaire',{permanent:false}).addTo(routeLayer);
-  map.fitBounds(L.polyline(a.runs.flatMap(r=>r.p)).getBounds(),{padding:[40,40]});
-  const rate=parseFloat($('rate').value)||0,rt=$('rt').checked?2:1,oz=$('oz').checked;
-  const base=D.S+(oz?D.O:0),km=base*rt,cost=km*rate;
-  let h=`<div class="sm" style="margin-bottom:6px"><b>A</b> ${esc(pts.s.label)}<br><b>B</b> ${esc(pts.e.label)}</div>`+'<table>'+
-   `<tr><td>Km en zone primaire (non facturés)</td><td>${fmt(D.P)} km</td></tr>`+
-   `<tr><td>Km en zone secondaire</td><td>${fmt(D.S)} km</td></tr>`+
-   `<tr><td>Km hors des zones listées</td><td>${fmt(D.O)} km</td></tr>`+
-   `<tr><td>Total du trajet (aller)</td><td>${fmt(D.P+D.S+D.O)} km</td></tr>`+
-   `<tr><td>Km facturables${rt===2?' (aller-retour)':''}</td><td>${fmt(km)} km</td></tr>`+
+  const R=last.res[m],COLR={P:'#1b6b32',S:'#d9730d',O:'#6b7780'},all=[];
+  R.legs.forEach(l=>l.ana.runs.forEach(r=>r.p.forEach(q=>all.push(q))));
+  L.polyline(all,{color:'#fff',weight:10,opacity:.9}).addTo(routeLayer);
+  R.legs.forEach(l=>{
+    l.ana.runs.forEach(r=>L.polyline(r.p,{color:COLR[r.c],weight:6,opacity:1,dashArray:l.approx?'2 8':null}).addTo(routeLayer));
+    if(l.ana.entry&&l.ana.entry.km>0.05)L.circleMarker([l.ana.entry.pt[1],l.ana.entry.pt[0]],{radius:7,color:'#fff',weight:3,fillColor:'#d9730d',fillOpacity:1}).bindTooltip('Entrée en zone secondaire').addTo(routeLayer);
+  });
+  map.fitBounds(L.polyline(all).getBounds(),{padding:[40,40]});
+}
+function show(m){
+  last.cur=m;
+  const rate=parseFloat($('rate').value)||0,oz=$('oz').checked;
+  const billed=T=>T.S+(oz?T.O:0);
+  const avail=MODES.filter(([k])=>last.res[k]);
+  const costs=avail.map(([k])=>billed(totals(last.res[k]))*rate);
+  const minC=Math.min(...costs),differ=costs.some(x=>Math.abs(x-minC)>0.005);
+  let h='<div class="sm" style="margin-bottom:4px">Choisis l\'itinéraire :</div>';
+  MODES.forEach(([k,l])=>{
+    const R=last.res[k];
+    if(!R){h+=`<div class="md off"><label><input type="radio" disabled> ${l}</label><div class="sm">Indisponible pour ce trajet.</div></div>`;return}
+    const T=totals(R),c=billed(T)*rate;
+    h+=`<div class="md${k===m?' sel':''}"><label><input type="radio" name="md" value="${k}"${k===m?' checked':''}> <b>${l}</b>${(avail.length>1&&differ&&Math.abs(c-minC)<0.005)?'<span class="zt" style="background:#2e9e4f">moins cher</span>':''}</label><div class="sm">${fmt(T.P+T.S+T.O)} km · ${fmt(billed(T))} km facturés · ${fmtDur(T.durOk?T.dur:null)} · <b>${fmt(c,2)} €</b></div></div>`;
+  });
+  const R=last.res[m],T=totals(R),km=billed(T),cost=km*rate;
+  h+='<table style="margin-top:8px">';
+  R.legs.forEach(l=>{h+=`<tr><td>${LET(l.fi)} → ${LET(l.ti)}</td><td>${fmt(l.dist.P+l.dist.S+l.dist.O)} km (dont ${fmt(l.dist.S)} en zone sec.)</td></tr>`});
+  h+=`<tr class="tot0"><td colspan="2" style="padding-top:8px"></td></tr>`+
+   `<tr><td>Km en zone primaire (non facturés)</td><td>${fmt(T.P)} km</td></tr>`+
+   `<tr><td>Km en zone secondaire</td><td>${fmt(T.S)} km</td></tr>`+
+   `<tr><td>Km hors des zones listées</td><td>${fmt(T.O)} km</td></tr>`+
+   `<tr><td>Total de la journée</td><td>${fmt(T.P+T.S+T.O)} km</td></tr>`+
+   `<tr><td>Km facturables</td><td>${fmt(km)} km</td></tr>`+
    `<tr><td>Prix du km</td><td>${fmt(rate,3)} €</td></tr>`+
    `<tr class="tot"><td>Frais kilométriques</td><td>${fmt(cost,2)} €</td></tr></table>`;
-  if(a.entry&&!approx)h+=`<div class="sm" style="margin-top:6px">Entrée en zone secondaire après ${fmt(a.entry.km*factor)} km de trajet.</div>`;
-  if(!a.entry&&D.O<0.05)h+='<div class="warn">Ce trajet ne passe par aucune zone secondaire : rien à facturer.</div>';
-  else if(!a.entry)h+=`<div class="warn">Ce trajet ne passe par aucune zone secondaire, mais ${fmt(D.O)} km sont hors des zones listées.</div>`;
-  if(D.O>=0.05&&!oz)h+=`<div class="warn"><b>${fmt(D.O)} km hors zones ne sont pas comptés.</b> Pour une demande exceptionnelle facturée jusqu'à l'arrivée, coche « Compter aussi les km hors des zones listées » puis recalcule.</div>`;
-  if(cls(pts.e.lng,pts.e.lat)!=='S')h+='<div class="warn">L\'arrivée n\'est pas située en zone secondaire.</div>';
-  if(cls(pts.s.lng,pts.s.lat)!=='P')h+='<div class="warn">Le départ n\'est pas situé en zone primaire. Les km sont comptés d\'après la zone où se trouve chaque tronçon.</div>';
-  if(approx)h+='<div class="warn">Service d\'itinéraire injoignable : distance estimée à vol d\'oiseau × 1,3 (pointillés). Réessaie avec une connexion pour un calcul sur route.</div>';
-  else h+='<div class="sm" style="margin-top:6px">Itinéraire le plus rapide calculé par OSRM (OpenStreetMap). Les contours des zones sont approximatifs : compte une marge de quelques centaines de mètres autour des limites.</div>';
-  res.innerHTML=h;
+  const anyS=R.legs.some(l=>l.ana.entry),approx=R.legs.some(l=>l.approx);
+  if(!anyS&&T.O<0.05)h+='<div class="warn">Ce trajet ne passe par aucune zone secondaire : rien à facturer.</div>';
+  else if(!anyS)h+=`<div class="warn">Ce trajet ne passe par aucune zone secondaire, mais ${fmt(T.O)} km sont hors des zones listées.</div>`;
+  if(T.O>=0.05&&!oz)h+=`<div class="warn"><b>${fmt(T.O)} km hors zones ne sont pas comptés.</b> Pour une demande exceptionnelle facturée jusqu'à l'arrivée, coche « Compter aussi les km hors des zones listées ».</div>`;
+  const p0=last.pts[0];
+  if(cls(p0.lng,p0.lat)!=='P')h+='<div class="warn">Le départ n\'est pas situé en zone primaire. Les km sont comptés d\'après la zone où se trouve chaque tronçon.</div>';
+  if(approx)h+='<div class="warn">Service d\'itinéraire injoignable pour au moins un tronçon : distance estimée à vol d\'oiseau × 1,3 (pointillés). Réessaie avec une connexion pour un calcul sur route.</div>';
+  else h+='<div class="sm" style="margin-top:6px">Itinéraires calculés par OSRM (OpenStreetMap). Les contours des zones sont approximatifs : compte une marge de quelques centaines de mètres autour des limites. Les péages ne sont pas inclus.</div>';
+  $('res').innerHTML=h;
+  $('res').querySelectorAll('input[name=md]').forEach(i=>i.onchange=()=>{show(i.value);draw(i.value)});
+}
+function refresh(){if(last)show(last.cur)}
+$('tier').onchange=e=>{$('rate').value=e.target.value;refresh()};
+$('rate').addEventListener('input',refresh);
+$('oz').addEventListener('change',refresh);
+
+$('calc').onclick=async()=>{
+  const res=$('res');res.style.display='block';
+  const n0=stops.length;
+  stops=stops.filter((s,i)=>i===0||i===n0-1||s.text.trim()||s.pt);
+  render();
+  const A=stops[0],Z=stops[stops.length-1];
+  if((!A.text.trim()&&!A.pt)||(!Z.text.trim()&&!Z.pt)){res.innerHTML='Renseigne le départ et l\'arrivée (code postal, ville, adresse, ou « Pointer » sur la carte).';return}
+  for(let i=0;i<stops.length;i++){
+    const s=stops[i];if(s.pt)continue;
+    const v=s.text.trim(),q=/^\d{5}$/.test(v)?cpPoint(v):null;
+    if(q){s.pt=q;continue}
+    res.innerHTML='Recherche de l\'adresse '+LET(i)+'…';
+    const r=await geo(v,1);
+    if(r&&r.length){s.pt={lat:r[0].lat,lng:r[0].lng,label:r[0].label};s.text=r[0].label;if(s.el)s.el.value=r[0].label}
+    else{res.innerHTML=r===null?'Recherche d\'adresses indisponible : utilise un code postal de la liste ou « Pointer ».':`Adresse introuvable pour ${LET(i)} : « ${esc(v)} ». Précise la ville ou choisis une suggestion.`;return}
+  }
+  drawPins();
+  const legsDef=[];
+  for(let i=0;i<stops.length-1;i++)legsDef.push({fi:i,ti:i+1});
+  if($('rt').checked&&stops.length>=2)legsDef.push({fi:stops.length-1,ti:0});
+  const all=[];
+  for(let i=0;i<legsDef.length;i++){
+    res.innerHTML=`Calcul des itinéraires… (${i+1}/${legsDef.length})`;
+    all.push(await legRoutes(stops[legsDef[i].fi].pt,stops[legsDef[i].ti].pt));
+  }
+  const out={};
+  MODES.forEach(([m])=>{
+    const legs=[];let ok=true;
+    legsDef.forEach((ld,i)=>{
+      const r=all[i][m];if(!r){ok=false;return}
+      const ana=analyse(r.coords),f=r.approx?1.3:1;
+      legs.push({fi:ld.fi,ti:ld.ti,ana,approx:r.approx,dur:r.dur,dist:{P:ana.dist.P*f,S:ana.dist.S*f,O:ana.dist.O*f}});
+    });
+    out[m]=ok?{legs}:null;
+  });
+  last={res:out,pts:stops.map(s=>s.pt),cur:'fast'};
+  show('fast');draw('fast');
 };
 </script>
 </body>
